@@ -1,0 +1,16 @@
+{
+  "scripts": {
+    "build": "rollup -c",
+    "zip": "zip -r lyrs-musixmatch.zip bundle.js manifest.json"
+  },
+  "dependencies": {
+    "fetch-cookie": "^3.1.0",
+    "rollup-plugin-base64": "^1.0.1",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^28.0.6",
+    "@rollup/plugin-node-resolve": "^16.0.1",
+    "rollup": "^4.44.0"
+  }
+}

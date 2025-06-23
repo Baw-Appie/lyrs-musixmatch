@@ -1,0 +1,10 @@
+{
+  "id": "com.bawappie.lyrs.musixmatch",
+  "name": "MusixMatch Lyrics",
+  "description": "LyricProvider of MusixMatch",
+  "author": "@BawAppie",
+  "version": "1.0.0",
+  "versionCode": 1,
+  "manifestVersion": 1,
+  "main": "bundle.js"
+}
