@@ -80,7 +80,7 @@ export class MusixMatchLyricProvider {
         this.logger.info("[Lyrs] [MusixMatch] Found Japanese lyrics, converting to Korean...", await hangulize("日本語"));
         Object.entries(convertedLyrics).forEach(async ([timestamp, lines]) => convertedLyrics[Number(timestamp)].push(await hangulize(lines[0])));
       } catch (e) {
-        this.logger.warn("[Lyrs] [MusixMatch] Failed to convert Japanese lyrics to Korean", e);
+        this.logger.warn("[Lyrs] [MusixMatch] Failed to convert Japanese lyrics to Korean...", e.message);
       }
     }
 
