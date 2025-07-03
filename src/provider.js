@@ -3,6 +3,7 @@ import makeCookieFetch from 'fetch-cookie';
 import { hangulize } from './hangulize/index.js';
 
 const cookieFetch = makeCookieFetch(fetch);
+const cacheTable = {}
 
 const LyricResponseSchema = z.object({
   id: z.number(),
@@ -51,6 +52,10 @@ export class MusixMatchLyricProvider {
   }
 
   async getLyricById(id) {
+    if(cacheTable[id]) {
+      this.logger.info("[Lyrs] [MusixMatch] Returning cached lyric for ID", id);
+      return cacheTable[id];
+    }
     const query = new URLSearchParams();
     query.set('commontrack_id', this.encode(id));
     query.set('usertoken', this.encode(await this.getUserToken()));
@@ -97,16 +102,23 @@ export class MusixMatchLyricProvider {
       });
     }
 
-    return {
+    const result = {
       ...this.responseToMetadata(lyric),
 
       lyric: convertedLyrics,
       lyricRaw: lyric.syncedLyrics,
-    };
+    }
+    cacheTable[id] = result;
+    return result;
   }
 
   async getLyric(params) {
     if (params.page && params.page > 1) return null;
+    const cacheKey = Object.values(params).join('|');
+    if (cacheTable[cacheKey]) {
+      this.logger.info("[Lyrs] [MusixMatch] Returning cached lyric for params", params);
+      return cacheTable[cacheKey];
+    }
 
     const query = new URLSearchParams();
     // If you want to search by title and artist, you can uncomment these lines
@@ -144,14 +156,13 @@ export class MusixMatchLyricProvider {
     if (!lyric.syncedLyrics) return null;
     this.logger.info("[LYRS] [MusixMatch] Synced lyrics found", lyric.syncedLyrics)
 
-    const convertedLyrics = this.syncedLyricsToLyric(lyric.syncedLyrics);
-
-    return {
+    const result = {
       ...this.responseToMetadata(lyric),
-
-      lyric: convertedLyrics,
+      lyric: this.syncedLyricsToLyric(lyric.syncedLyrics),
       lyricRaw: lyric.syncedLyrics,
-    };
+    }
+    cacheTable[cacheKey] = result;
+    return result;
   }
 
   async searchLyrics(params) {
