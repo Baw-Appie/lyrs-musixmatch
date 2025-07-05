@@ -3,7 +3,7 @@
   "name": "MusixMatch Lyrics",
   "description": "LyricProvider of MusixMatch",
   "author": "@BawAppie",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "versionCode": 2,
   "manifestVersion": 1,
   "main": "bundle.js"
