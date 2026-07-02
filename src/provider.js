@@ -112,27 +112,16 @@ export class MusixMatchLyricProvider {
     return result;
   }
 
-  async getLyric(params) {
-    if (params.page && params.page > 1) return null;
-    const cacheKey = Object.values(params).join('|');
-    if (cacheTable[cacheKey]) {
-      this.logger.info("[Lyrs] [MusixMatch] Returning cached lyric for params", params);
+  async getLyricByIsrc(isrc, cacheKey = null) {
+    if (cacheKey && cacheTable[cacheKey]) {
+      this.logger.info("[Lyrs] [MusixMatch] Returning cached lyric for cache key", cacheKey);
       return cacheTable[cacheKey];
     }
 
     const query = new URLSearchParams();
-    // If you want to search by title and artist, you can uncomment these lines
-    // but, query is must be exactly same with MusixMatch
-    // if (params.title) query.set('q_track', this.encode(params.title));
-    // if (params.artist) query.set('q_artist', this.encode(params.artist));
     query.set('usertoken', this.encode(await this.getUserToken()));
     query.set('app_id', this.encode("mac-ios-v2.0"));
-    const isrc = await this.getIsrc(params.title || "", params.artist || "");
-    if (!isrc) {
-      this.logger.warn('[Lyrs] [MusixMatch] No isrc ID found for search', params);
-      return null;
-    }
-    query.set('track_isrc', this.encode(isrc || ""));
+    query.set('track_isrc', this.encode(isrc));
     this.logger.info("[Lyrs] [MusixMatch] Fetching lyrics with query", query.toString());
 
     const response = await cookieFetch(`https://apic.musixmatch.com/ws/1.1/macro.subtitles.get?${query.toString()}`);
@@ -161,17 +150,56 @@ export class MusixMatchLyricProvider {
       lyric: this.syncedLyricsToLyric(lyric.syncedLyrics),
       lyricRaw: lyric.syncedLyrics,
     }
-    cacheTable[cacheKey] = result;
+    if (cacheKey) {
+      cacheTable[cacheKey] = result;
+    }
     return result;
   }
 
+  async getLyric(params) {
+    if (params.page && params.page > 1) return null;
+    const cacheKey = Object.values(params).join('|');
+    if (cacheTable[cacheKey]) {
+      this.logger.info("[Lyrs] [MusixMatch] Returning cached lyric for params", params);
+      return cacheTable[cacheKey];
+    }
+
+    const isrcList = await this.getIsrc(params.title || "", params.artist || "", 1);
+    if (!isrcList || isrcList.length === 0) {
+      this.logger.warn('[Lyrs] [MusixMatch] No isrc ID found for search', params);
+      return null;
+    }
+
+    return await this.getLyricByIsrc(isrcList[0].isrc, cacheKey);
+  }
+
   async searchLyrics(params) {
-    const lyric = await this.getLyric(params);
-    if (!lyric) {
-      this.logger.warn('[Lyrs] [MusixMatch] No lyrics found for search', params);
+    if (params.page && params.page > 1) return [];
+    
+    // 여러 곡 검색 (최대 5개)
+    const isrcList = await this.getIsrc(params.title || "", params.artist || "", 5);
+    if (!isrcList || isrcList.length === 0) {
+      this.logger.warn('[Lyrs] [MusixMatch] No isrc IDs found for search', params);
       return [];
     }
-    return [lyric]
+
+    this.logger.info(`[Lyrs] [MusixMatch] Found ${isrcList.length} songs, fetching lyrics...`);
+
+    // 각 곡에 대해 가사 가져오기
+    const lyrics = [];
+    for (const isrcInfo of isrcList) {
+      try {
+        const lyric = await this.getLyricByIsrc(isrcInfo.isrc);
+        if (lyric) {
+          lyrics.push(lyric);
+        }
+      } catch (error) {
+        this.logger.warn(`[Lyrs] [MusixMatch] Failed to fetch lyric for ${isrcInfo.title}`, error);
+      }
+    }
+
+    this.logger.info(`[Lyrs] [MusixMatch] Successfully fetched ${lyrics.length} lyrics`);
+    return lyrics;
   }
 
   getOptions(language) {
@@ -199,20 +227,26 @@ export class MusixMatchLyricProvider {
     }]);
   }
 
-  async getIsrc(title, artist) {
+  async getIsrc(title, artist, limit = 1) {
     // https://www.shazam.com/services/amapi/v1/catalog/KR/search?types=songs&term=yorushika&limit=3
     const query = new URLSearchParams();
     query.set('term', artist + ' ' + title);
     query.set('types', 'songs');
-    query.set('limit', '1');
+    query.set('limit', limit.toString());
     const response = await fetch(`https://www.shazam.com/services/amapi/v1/catalog/KR/search?${query.toString()}`);
     const json = await response.json();
     if (!json || json.results?.songs?.data?.length === 0) {
       this.logger.warn('[Lyrs] [MusixMatch] No results found for Isrc search', json);
-      return null;
+      return [];
     }
-    this.logger.info("[Lyrs] [MusixMatch] Found Isrc ID", json.results.songs.data[0].attributes.isrc);
-    return json.results.songs.data[0].attributes.isrc;
+    const isrcList = json.results.songs.data.map(song => ({
+      isrc: song.attributes.isrc,
+      title: song.attributes.name,
+      artist: song.attributes.artistName,
+      album: song.attributes.albumName,
+    }));
+    this.logger.info("[Lyrs] [MusixMatch] Found Isrc IDs", isrcList);
+    return isrcList;
   }
 
   responseToMetadata(lyric) {
