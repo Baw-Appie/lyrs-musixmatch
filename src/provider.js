@@ -3,7 +3,9 @@ import makeCookieFetch from 'fetch-cookie';
 import { hangulize } from './hangulize/index.js';
 
 const cookieFetch = makeCookieFetch(fetch);
-const cacheTable = {}
+const cacheTable = {} // 가사 캐시
+const isrcCache = {} // ISRC 검색 결과 캐시
+const translationCache = {} // 번역 캐시
 
 const LyricResponseSchema = z.object({
   id: z.number(),
@@ -54,9 +56,10 @@ export class MusixMatchLyricProvider {
   }
 
   async getLyricById(id) {
-    if(cacheTable[id]) {
+    const cacheKey = `id:${id}`;
+    if(cacheTable[cacheKey]) {
       this.logger.info("[Lyrs] [MusixMatch] Returning cached lyric for ID", id);
-      return cacheTable[id];
+      return cacheTable[cacheKey];
     }
     const query = new URLSearchParams();
     query.set('commontrack_id', this.encode(id));
@@ -92,18 +95,30 @@ export class MusixMatchLyricProvider {
       }
     }
 
-    const translationResponse = await cookieFetch(`https://apic.musixmatch.com/ws/1.1/crowd.track.translations.get?app_id=mac-ios-v2.0&usertoken=${this.encode(await this.getUserToken())}&commontrack_id=${this.encode(lyric.id.toString())}&selected_language=${this.targetLanguage}`);
-    const translationJson = await translationResponse.json();
-    const translationSuccess = translationJson.message?.header?.status_code === 200;
-    if (!translationSuccess) {
-      this.logger.warn('[Lyrs] [MusixMatch] Failed to fetch translation', translationJson);
+    // 번역 캐시 체크
+    const translationCacheKey = `translation:${lyric.id}:${this.targetLanguage}`;
+    let translations = translationCache[translationCacheKey];
+    
+    if (!translations) {
+      const translationResponse = await cookieFetch(`https://apic.musixmatch.com/ws/1.1/crowd.track.translations.get?app_id=mac-ios-v2.0&usertoken=${this.encode(await this.getUserToken())}&commontrack_id=${this.encode(lyric.id.toString())}&selected_language=${this.targetLanguage}`);
+      const translationJson = await translationResponse.json();
+      const translationSuccess = translationJson.message?.header?.status_code === 200;
+      if (!translationSuccess) {
+        this.logger.warn('[Lyrs] [MusixMatch] Failed to fetch translation', translationJson);
+        translations = [];
+      } else {
+        translations = translationJson.message?.body?.translations_list || [];
+        // 번역 결과 캐싱
+        translationCache[translationCacheKey] = translations;
+      }
     } else {
-      const translations = translationJson.message?.body?.translations_list || [];
-      translations.forEach(tr => {
-        const { subtitle_matched_line: source, description: target } = tr.translation;
-        Object.entries(convertedLyrics).forEach(([timestamp, lines]) => lines.includes(source) && convertedLyrics[Number(timestamp)].push(target));
-      });
+      this.logger.info("[Lyrs] [MusixMatch] Using cached translation for", lyric.id);
     }
+
+    translations.forEach(tr => {
+      const { subtitle_matched_line: source, description: target } = tr.translation;
+      Object.entries(convertedLyrics).forEach(([timestamp, lines]) => lines.includes(source) && convertedLyrics[Number(timestamp)].push(target));
+    });
 
     const result = {
       ...this.responseToMetadata(lyric),
@@ -111,11 +126,19 @@ export class MusixMatchLyricProvider {
       lyric: convertedLyrics,
       lyricRaw: lyric.syncedLyrics,
     }
-    cacheTable[id] = result;
+    cacheTable[cacheKey] = result;
     return result;
   }
 
   async getLyricByIsrc(isrc, cacheKey = null) {
+    // ISRC 기반 캐시 체크
+    const isrcCacheKey = `isrc:${isrc}`;
+    if (cacheTable[isrcCacheKey]) {
+      this.logger.info("[Lyrs] [MusixMatch] Returning cached lyric for ISRC", isrc);
+      return cacheTable[isrcCacheKey];
+    }
+
+    // cacheKey 기반 캐시 체크 (하위 호환성)
     if (cacheKey && cacheTable[cacheKey]) {
       this.logger.info("[Lyrs] [MusixMatch] Returning cached lyric for cache key", cacheKey);
       return cacheTable[cacheKey];
@@ -153,9 +176,13 @@ export class MusixMatchLyricProvider {
       lyric: this.syncedLyricsToLyric(lyric.syncedLyrics),
       lyricRaw: lyric.syncedLyrics,
     }
+    
+    // 여러 캐시 키에 저장
+    cacheTable[isrcCacheKey] = result;
     if (cacheKey) {
       cacheTable[cacheKey] = result;
     }
+    
     return result;
   }
 
@@ -244,6 +271,13 @@ export class MusixMatchLyricProvider {
   }
 
   async getIsrc(title, artist, limit = 1) {
+    // ISRC 검색 결과 캐싱
+    const searchKey = `search:${artist}:${title}:${limit}`;
+    if (isrcCache[searchKey]) {
+      this.logger.info("[Lyrs] [MusixMatch] Returning cached ISRC search results");
+      return isrcCache[searchKey];
+    }
+
     // https://www.shazam.com/services/amapi/v1/catalog/KR/search?types=songs&term=yorushika&limit=3
     const query = new URLSearchParams();
     query.set('term', artist + ' ' + title);
@@ -253,6 +287,7 @@ export class MusixMatchLyricProvider {
     const json = await response.json();
     if (!json || json.results?.songs?.data?.length === 0) {
       this.logger.warn('[Lyrs] [MusixMatch] No results found for Isrc search', json);
+      isrcCache[searchKey] = []; // 빈 결과도 캐싱하여 중복 요청 방지
       return [];
     }
     const isrcList = json.results.songs.data.map(song => ({
@@ -262,6 +297,9 @@ export class MusixMatchLyricProvider {
       album: song.attributes.albumName,
     }));
     this.logger.info("[Lyrs] [MusixMatch] Found Isrc IDs", isrcList);
+    
+    // 검색 결과 캐싱
+    isrcCache[searchKey] = isrcList;
     return isrcList;
   }
 
