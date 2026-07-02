@@ -24,6 +24,7 @@ export class MusixMatchLyricProvider {
     this.usertoken = ""
     this._updatingUserTokenPromise = null;
     this.targetLanguage = "ko";
+    this.useHangulize = true; // 기본값
     this.config = config()
     this.setConfig = setConfig
     this.logger = logger;
@@ -31,6 +32,7 @@ export class MusixMatchLyricProvider {
 
   async getUserToken() {
     this.targetLanguage = this.config.language
+    this.useHangulize = this.config.useHangulize !== false // 기본값은 true
     this.usertoken = this.config.musixMatchToken
     if (this.usertoken) return this.usertoken;
     if (!this._updatingUserTokenPromise) {
@@ -78,6 +80,7 @@ export class MusixMatchLyricProvider {
     const convertedLyrics = this.syncedLyricsToLyric(lyric.syncedLyrics);
 
     if (
+      this.useHangulize &&
       this.targetLanguage == "ko" &&
       json.message?.body?.macro_calls?.['track.subtitles.get']?.message?.body?.subtitle_list[0]?.subtitle?.subtitle_language == "ja"
     ) {
@@ -203,10 +206,23 @@ export class MusixMatchLyricProvider {
   }
 
   getOptions(language) {
-    return [];
+    return [
+      {
+        id: 'useHangulize',
+        type: 'toggle',
+        label: language === 'ko' ? '한글라이즈 사용' : 'Use Hangulize',
+        description: language === 'ko' 
+          ? '일본어 가사를 한글로 자동 변환합니다' 
+          : 'Automatically convert Japanese lyrics to Korean',
+        default: true,
+      }
+    ];
   }
 
-  onOptionChange(options) { }
+  onOptionChange(options) {
+    this.useHangulize = options.useHangulize !== false;
+    this.setConfig({ useHangulize: this.useHangulize });
+  }
 
   encode(str) {
     return encodeURIComponent(str).replace(/%20/g, '+');
