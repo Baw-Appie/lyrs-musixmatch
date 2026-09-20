@@ -6,6 +6,8 @@ const cookieFetch = makeCookieFetch(fetch);
 const cacheTable = {} // 가사 캐시
 const isrcCache = {} // ISRC 검색 결과 캐시
 const translationCache = {} // 번역 캐시
+let shazamJwtCache = null
+let shazamJwtExpiresAt = 0
 
 const LyricResponseSchema = z.object({
   id: z.number(),
@@ -284,8 +286,21 @@ export class MusixMatchLyricProvider {
       return isrcCache[searchKey];
     }
 
-    const shazamHeadersReq = await fetch("https://www.shazam.com/services/musickit/validate");
-    const shazam = shazamHeadersReq.headers.get("x-shz-validation");
+    let shazam = shazamJwtCache;
+    if (!shazam || Date.now() >= shazamJwtExpiresAt) {
+      const shazamHeadersReq = await fetch("https://www.shazam.com/services/musickit/validate");
+      shazam = shazamHeadersReq.headers.get("x-shz-validation");
+      if (shazam) {
+        shazamJwtCache = shazam;
+        shazamJwtExpiresAt = Date.now() + 5 * 60 * 1000;
+        try {
+          const payload = JSON.parse(Buffer.from(shazam.split('.')[1], 'base64url').toString());
+          if (payload.exp) shazamJwtExpiresAt = payload.exp * 1000;
+        } catch (_) {
+          // Use the fallback cache duration for non-JWT validation tokens.
+        }
+      }
+    }
     if(!shazam) {
       this.logger.warn("[Lyrs] [MusixMatch] Failed to fetch Shazam validation headers");
       return [];
