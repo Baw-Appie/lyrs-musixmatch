@@ -205,11 +205,17 @@ export class MusixMatchLyricProvider {
 
   async searchLyrics(params) {
     if (params.page && params.page > 1) return [];
-    
+
     // 여러 곡 검색 (최대 5개)
-    const isrcList = await this.getIsrc(params.title || "", params.artist || "", 5);
-    if (!isrcList || isrcList.length === 0) {
-      this.logger.warn('[Lyrs] [MusixMatch] No isrc IDs found for search', params);
+    let isrcList;
+    try {
+      isrcList = await this.getIsrc(params.title || "", params.artist || "", 5);
+      if (!isrcList || isrcList.length === 0) {
+        this.logger.warn('[Lyrs] [MusixMatch] No isrc IDs found for search', params);
+        return [];
+      }
+    } catch(error) {
+      this.logger.warn('[Lyrs] [MusixMatch] Failed to search lyrics', error);
       return [];
     }
 
@@ -278,12 +284,25 @@ export class MusixMatchLyricProvider {
       return isrcCache[searchKey];
     }
 
+    const shazamHeadersReq = await fetch("https://www.shazam.com/services/musickit/validate");
+    const shazam = shazamHeadersReq.headers.get("x-shz-validation");
+    if(!shazam) {
+      this.logger.warn("[Lyrs] [MusixMatch] Failed to fetch Shazam validation headers");
+      return [];
+    }
+
     // https://www.shazam.com/services/amapi/v1/catalog/KR/search?types=songs&term=yorushika&limit=3
     const query = new URLSearchParams();
     query.set('term', artist + ' ' + title);
     query.set('types', 'songs');
     query.set('limit', limit.toString());
-    const response = await fetch(`https://www.shazam.com/services/amapi/v1/catalog/KR/search?${query.toString()}`);
+    query.set('l', 'ko-KR');
+    const response = await fetch(`https://api.music.apple.com/v1/catalog/kr/search?${query.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${shazam}`,
+        Origin: 'https://www.shazam.com',
+      }
+    });
     const json = await response.json();
     if (!json || json.results?.songs?.data?.length === 0) {
       this.logger.warn('[Lyrs] [MusixMatch] No results found for Isrc search', json);
