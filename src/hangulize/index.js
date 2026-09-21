@@ -5,9 +5,7 @@ const GITHUB_REPO_BASE = "https://raw.githubusercontent.com/Baw-Appie/lyrs-musix
 const HANGULIZE_WASM_URL = `${GITHUB_REPO_BASE}/hangulize.wasm`;
 const TRANSLIT_WASM_URL = `${GITHUB_REPO_BASE}/furigana.translit.wasm`;
 
-// Cache for WASM bytes to avoid re-downloading
-let hangulizeBytes = null;
-let translitBytes = null;
+// Memoized loader: WASM is fetched on first hangulize() call, never on import
 let loadPromise = null;
 
 async function fetchWasmBytes(url) {
@@ -18,44 +16,35 @@ async function fetchWasmBytes(url) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
+async function init() {
+  const [hangulizeBytes, translitBytes] = await Promise.all([
+    fetchWasmBytes(HANGULIZE_WASM_URL),
+    fetchWasmBytes(TRANSLIT_WASM_URL),
+  ]);
+
+  const hangulizeGo = new globalThis.Go();
+  const furiganaGo = new globalThis.Go();
+  const [hangulizeMod, furiganaMod] = await Promise.all([
+    WebAssembly.instantiate(hangulizeBytes, hangulizeGo.importObject),
+    WebAssembly.instantiate(translitBytes, furiganaGo.importObject),
+  ]);
+  hangulizeGo.run(hangulizeMod.instance);
+  furiganaGo.run(furiganaMod.instance);
+  await globalThis.hangulize.useTranslit("furigana", (word) => globalThis.translit("furigana", word));
+}
 
 async function load() {
-  // Prevent multiple simultaneous loads
-  if (loadPromise) {
-    return await loadPromise;
+  if (!loadPromise) {
+    // Reset on failure so the next call can retry
+    loadPromise = init().catch((error) => {
+      loadPromise = null;
+      throw error;
+    });
   }
-  
-  loadPromise = (async () => {
-    // Fetch WASM files from GitHub if not already cached
-    if (!hangulizeBytes) {
-      hangulizeBytes = await fetchWasmBytes(HANGULIZE_WASM_URL);
-    }
-    if (!translitBytes) {
-      translitBytes = await fetchWasmBytes(TRANSLIT_WASM_URL);
-    }
-
-    const hangulizeGo = new globalThis.Go();
-    const furiganaGo = new globalThis.Go();
-    const result = await WebAssembly.instantiate(hangulizeBytes, hangulizeGo.importObject)
-    const furigana = await WebAssembly.instantiate(translitBytes, furiganaGo.importObject)
-    hangulizeGo.run(result.instance)
-    furiganaGo.run(furigana.instance)
-    await globalThis.hangulize.useTranslit("furigana", async (word) => {
-      return await globalThis.translit("furigana", word)
-    })
-  })();
-  
-  try {
-    await loadPromise;
-  } catch (error) {
-    // Reset loadPromise so it can be retried
-    loadPromise = null;
-    throw error;
-  }
+  return loadPromise;
 }
-load()
 
 export async function hangulize(text) {
-  if(!globalThis.hangulize) await load();
+  await load();
   return await globalThis.hangulize("jpn", text)
 }
